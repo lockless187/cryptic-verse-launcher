@@ -1,0 +1,33 @@
+
+name: Build Windows installer
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build EXE installer
+        run: npm run build:windows
+
+      - name: Create installer release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "desktop-1.0.0-build-${{ github.run_number }}"
+          $installer = Get-ChildItem -Path dist -Filter "*.exe" | Select-Object -First 1
+          if (-not $installer) { throw "No EXE installer was produced" }
+          gh release create $tag $installer.FullName --title "Cryptic Verse Launcher $tag" --notes "Windows installer." --latest
