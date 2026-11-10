@@ -1,6 +1,6 @@
 {
   "name": "cryptic-verse-desktop",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Cryptic Verse Windows Store, Library and game installer",
   "main": "main.js",
   "license": "UNLICENSED",
@@ -20,8 +20,25 @@
     "appId": "com.crypticverse.desktop",
     "productName": "Cryptic Verse",
     "asar": true,
-    "files": ["main.js", "preload.js", "index.html", "renderer.js", "styles.css", "package.json"],
-    "win": {"target": "nsis", "artifactName": "Cryptic-Verse-Setup-${version}.${ext}"},
-    "nsis": {"oneClick": false, "allowToChangeInstallationDirectory": true, "createDesktopShortcut": true, "createStartMenuShortcut": true, "shortcutName": "Cryptic Verse"}
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "renderer.js",
+      "styles.css",
+      "package.json",
+      "assets/**/*"
+    ],
+    "win": {
+      "target": "nsis",
+      "artifactName": "Cryptic-Verse-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Cryptic Verse"
+    }
   }
 }
