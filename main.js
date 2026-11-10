@@ -7,7 +7,7 @@ const path=require('node:path');
 const {spawn}=require('node:child_process');
 const {pipeline}=require('node:stream/promises');
 const {Readable,Transform}=require('node:stream');
-const extract=require('extract-zip');
+const {extractGameZip}=require('./secure-zip');
 const crypto=require('node:crypto');
 const API='https://btifqqcrifafhnnccqmq.supabase.co';
 // This is the Supabase PUBLISHABLE key (safe in clients), not a secret service-role key.
@@ -133,21 +133,7 @@ async function install(id){
     const magic=Buffer.alloc(4);const file=await fs.open(zip,'r');try{await file.read(magic,0,4,0);}finally{await file.close();}
     if(magic.toString('hex')!=='504b0304')throw Error('Developer build is not a standard ZIP.');
     emit('progress',{id,status:'Unpacking',percentage:100});
-    let entryCount=0, expandedBytes=0;
-    await extract(zip,{dir:tmp,onEntry(entry){
-      entryCount++;
-      if(entryCount>MAX_ENTRIES)throw Error('Game ZIP has too many entries.');
-      const mode=(entry.externalFileAttributes>>>16)&0o170000;
-      if(mode===0o120000)throw Error('Symlinks are prohibited in game ZIPs.');
-      const size=Number(entry.uncompressedSize);
-      if(!Number.isSafeInteger(size)||size<0)throw Error('Invalid ZIP entry size.');
-      expandedBytes+=size;
-      if(expandedBytes>MAX_UNPACKED)throw Error('Game ZIP exceeds the unpacked size limit.');
-      const filename=String(entry.fileName||'');
-      if(filename.includes('\\')||filename.includes('\0')||filename.startsWith('/')||filename.split('/').includes('..')||/^[A-Za-z]:/.test(filename)){
-        throw Error('Unsafe ZIP entry path.');
-      }
-    }});
+    await extractGameZip(zip,tmp,{maxEntries:MAX_ENTRIES,maxBytes:MAX_UNPACKED});
     // Never trust ZIP-reported sizes alone: inspect what was actually extracted.
     let actualSize=0, actualCount=0;
     function inspect(dir){
