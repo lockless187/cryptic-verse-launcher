@@ -62,3 +62,20 @@ $('auth-form').addEventListener('submit',async e=>{e.preventDefault();$('auth-st
 });
 window.cryptic.events(data=>{if(data.type==='progress'){state.progress.set(data.id,{status:data.status,percentage:data.percentage});renderDownloads();}else if(data.type==='error')notify(data.message);});
 refresh().catch(e=>notify(e.message));
+
+// Seasonal artwork follows the same calendar as the Cryptic Verse website.
+(function setupSeasons(){
+  const names={spring:'SPRING',summer:'SUMMER',autumn:'AUTUMN',winter:'WINTER',christmas:'CHRISTMAS'};
+  function updateSeason(){
+    // Cryptic Verse website uses Regina, Saskatchewan local dates.
+    const bits=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Regina',month:'numeric',day:'numeric'}).formatToParts(new Date());
+    const m=Number(bits.find(p=>p.type==='month').value),d=Number(bits.find(p=>p.type==='day').value);
+    const season=m===12&&(d===24||d===25)?'christmas':m>=3&&m<=5?'spring':m>=6&&m<=8?'summer':m>=9&&m<=11?'autumn':'winter';
+    document.body.dataset.season=season;
+    const label=document.getElementById('season-label');if(label)label.textContent=names[season]+' EDITION';
+    const eyebrow=document.getElementById('season-eyebrow');if(eyebrow)eyebrow.textContent='CRYPTIC VERSE · '+names[season]+' EDITION';
+  }
+  updateSeason();
+  // Re-evaluate periodically, including across midnight and daylight transitions.
+  setInterval(updateSeason,15*60*1000);
+})();
