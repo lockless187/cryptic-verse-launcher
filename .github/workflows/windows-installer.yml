@@ -1,36 +1,43 @@
-
-name: Build Windows Installer
+name: Build Windows Installer (Security Review)
 
 on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  build:
+  security-build:
     runs-on: windows-latest
-
     steps:
       - name: Get launcher files
         uses: actions/checkout@v4
-
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-
-      - name: Install dependencies
-        run: npm install
-
-     
-      - name: Build Windows installer
+      - name: Install exact declared dependencies
+        run: npm install --ignore-scripts=false
+      - name: Check JavaScript syntax
+        shell: pwsh
+        run: |
+          node --check main.js
+          node --check preload.js
+          node --check renderer.js
+      - name: Scan production dependencies
+        run: npm audit --omit=dev --audit-level=high
+      - name: Build unsigned installer for Microsoft security review ONLY
         run: npm run build:windows -- --publish never
-
-
-      - name: Upload installer
+      - name: Generate SHA256 fingerprint
+        shell: pwsh
+        run: |
+          Get-FileHash -Algorithm SHA256 dist\*.exe | ForEach-Object { "$($_.Hash)  $(Split-Path $_.Path -Leaf)" } | Out-File dist\SHA256SUMS.txt -Encoding ascii
+      - name: Upload review candidate (NOT public release)
         uses: actions/upload-artifact@v4
         with:
-          name: Cryptic-Verse-Windows-Installer
-          path: dist/*.exe
+          name: Cryptic-Verse-SECURITY-REVIEW-NOT-FOR-DISTRIBUTION
+          path: |
+            dist/*.exe
+            dist/SHA256SUMS.txt
           if-no-files-found: error
+          retention-days: 7
