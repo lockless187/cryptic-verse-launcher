@@ -1,7 +1,7 @@
 'use strict';
 // Windows-only managed launcher. No arbitrary remote code runs in the Electron renderer.
 const {app,BrowserWindow,ipcMain,safeStorage,shell,dialog}=require('electron');
-const {readFileSync,writeFileSync,existsSync,mkdirSync,rmSync,renameSync,readdirSync,statSync,createWriteStream}=require('node:fs');
+const {readFileSync,writeFileSync,existsSync,mkdirSync,rmSync,renameSync,readdirSync,statSync,createReadStream,createWriteStream}=require('node:fs');
 const fs=require('node:fs/promises');
 const path=require('node:path');
 const {spawn}=require('node:child_process');
@@ -16,6 +16,9 @@ const BUCKET='fv-game-builds';
 let win,account=null,busy=new Set();
 const root=()=>path.join(app.getPath('userData'),'installed-games');
 const registryPath=()=>path.join(app.getPath('userData'),'installed.json');
+// SHA-256 records help identify file changes; they do NOT replace publisher-side signatures.
+const MAX_UNPACKED=4*1024*1024*1024;
+const MAX_ENTRIES=5000;
 const tokenPath=()=>path.join(app.getPath('userData'),'session.bin');
 const emit=(type,extra={})=>{if(win&&!win.isDestroyed())win.webContents.send('cv:event',{type,...extra});};
 function rows(){try{const obj=JSON.parse(readFileSync(registryPath(),'utf8'));return Array.isArray(obj)?obj.filter(x=>x&&/^[\w-]+$/.test(x.id)&&typeof x.exe==='string'):[];}catch{return[];}}
@@ -124,13 +127,42 @@ async function install(id){
     const max=2*1024*1024*1024;if(length>max)throw Error('Game exceeds 2 GB launcher limit.');
     const counter=new Transform({transform(chunk,_,done){received+=chunk.length;if(received>max)return done(Error('Download exceeds 2 GB.'));emit('progress',{id,status:'Downloading',percentage:length?Math.min(99,Math.round(received/length*100)):null,received});done(null,chunk);}});
     await pipeline(Readable.fromWeb(response.body),counter,createWriteStream(zip));
+    const archiveHash=crypto.createHash('sha256');
+    for await (const block of createReadStream(zip)) archiveHash.update(block);
+    const zipSHA256=archiveHash.digest('hex');
     const magic=Buffer.alloc(4);const file=await fs.open(zip,'r');try{await file.read(magic,0,4,0);}finally{await file.close();}
     if(magic.toString('hex')!=='504b0304')throw Error('Developer build is not a standard ZIP.');
     emit('progress',{id,status:'Unpacking',percentage:100});
+    let entryCount=0, expandedBytes=0;
     await extract(zip,{dir:tmp,onEntry(entry){
+      entryCount++;
+      if(entryCount>MAX_ENTRIES)throw Error('Game ZIP has too many entries.');
       const mode=(entry.externalFileAttributes>>>16)&0o170000;
       if(mode===0o120000)throw Error('Symlinks are prohibited in game ZIPs.');
+      const size=Number(entry.uncompressedSize);
+      if(!Number.isSafeInteger(size)||size<0)throw Error('Invalid ZIP entry size.');
+      expandedBytes+=size;
+      if(expandedBytes>MAX_UNPACKED)throw Error('Game ZIP exceeds the unpacked size limit.');
+      const filename=String(entry.fileName||'');
+      if(filename.includes('\\')||filename.includes('\0')||filename.startsWith('/')||filename.split('/').includes('..')||/^[A-Za-z]:/.test(filename)){
+        throw Error('Unsafe ZIP entry path.');
+      }
     }});
+    // Never trust ZIP-reported sizes alone: inspect what was actually extracted.
+    let actualSize=0, actualCount=0;
+    function inspect(dir){
+      for(const item of readdirSync(dir,{withFileTypes:true})){
+        if(++actualCount>MAX_ENTRIES)throw Error('Extracted package contains too many files.');
+        const full=path.join(dir,item.name);
+        if(item.isSymbolicLink())throw Error('Extracted package contains a symlink.');
+        if(item.isDirectory())inspect(full);
+        else if(item.isFile()){
+          actualSize+=statSync(full).size;
+          if(actualSize>MAX_UNPACKED)throw Error('Extracted package exceeds the size limit.');
+        }else throw Error('Unsupported extracted file type.');
+      }
+    }
+    inspect(tmp);
     const exes=listExes(tmp),exe=selectExe(exes);
     const relative=path.relative(tmp,exe);
     if(!relative||relative.startsWith('..')||path.isAbsolute(relative))throw Error('Unsafe executable path.');
@@ -141,7 +173,7 @@ async function install(id){
     if(existsSync(destination))renameSync(destination,backup);
     try{renameSync(tmp,destination);}catch(e){if(existsSync(backup))renameSync(backup,destination);throw e;}
     const versions=await versionMap().catch(()=>({}));
-    const newRecord={id,title:String(game.title||'Game'),exe:path.join(destination,relative),version:versions[id]||'Unknown',installedAt:new Date().toISOString(),owner:account.user.id};
+    const newRecord={id,title:String(game.title||'Game'),exe:path.join(destination,relative),version:versions[id]||'Unknown',installedAt:new Date().toISOString(),archiveSHA256:zipSHA256,owner:account.user.id};
     writeRows([...rows().filter(x=>x.id!==id),newRecord]);
     if(existsSync(backup))rmSync(backup,{recursive:true,force:true});
     emit('progress',{id,status:'Ready to play',percentage:100});
